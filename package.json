@@ -1,0 +1,11 @@
+{
+  "name": "vvt-text-stream-viewer",
+  "version": "1.0.0",
+  "description": "Simple static viewer for video files with VVT captions.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "author": "",
+  "license": "MIT"
+}
