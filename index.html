@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Video & VVT Viewer</title>
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #0f172a;
+      background-color: #f8fafc;
+      line-height: 1.5;
+    }
+
+    body {
+      margin: 0;
+      display: flex;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 3rem 1.5rem;
+    }
+
+    main {
+      max-width: 960px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 2rem;
+      align-items: center;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2rem, 3vw + 1rem, 3rem);
+      text-align: center;
+      color: #0f172a;
+    }
+
+    .drop-zone {
+      border: 2px dashed #94a3b8;
+      border-radius: 12px;
+      padding: 2.5rem;
+      width: min(100%, 640px);
+      background-color: #e2e8f0;
+      color: #475569;
+      text-align: center;
+      transition: border-color 0.2s ease, background-color 0.2s ease;
+      cursor: pointer;
+    }
+
+    .drop-zone.dragover {
+      border-color: #2563eb;
+      background-color: #cbd5f5;
+    }
+
+    .video-wrapper {
+      display: none;
+      flex-direction: column;
+      gap: 0.5rem;
+      width: min(100%, 720px);
+    }
+
+    .video-container {
+      position: relative;
+      border-radius: 12px;
+      overflow: hidden;
+      background-color: #000;
+    }
+
+    video {
+      width: 100%;
+      display: block;
+    }
+
+    .caption-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 1.25rem 1.5rem 0;
+      pointer-events: none;
+    }
+
+    .caption-overlay span {
+      background-color: rgba(15, 23, 42, 0.75);
+      color: #f8fafc;
+      padding: 0.35rem 0.75rem;
+      border-radius: 999px;
+      font-size: clamp(0.95rem, 0.7vw + 0.9rem, 1.15rem);
+      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.35);
+      max-width: 90%;
+      text-align: center;
+    }
+
+    .file-status {
+      color: #1f2937;
+      margin: 0;
+      font-size: 0.95rem;
+    }
+
+    @media (max-width: 600px) {
+      .drop-zone {
+        padding: 2rem 1.5rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Drop a Video & VVT Caption File</h1>
+    <div id="dropZone" class="drop-zone" role="button" tabindex="0">
+      <p>Drag and drop a video file and its companion <code>.vvt</code> captions here.</p>
+      <p class="file-status" id="fileStatus">Waiting for files…</p>
+      <p><small>You can also click to open a file picker.</small></p>
+    </div>
+
+    <div class="video-wrapper" id="videoWrapper" aria-live="polite">
+      <div class="video-container">
+        <video id="video" controls preload="metadata"></video>
+        <div class="caption-overlay" aria-hidden="true">
+          <span id="captionText"></span>
+        </div>
+      </div>
+      <p class="file-status" id="loadedFiles"></p>
+    </div>
+  </main>
+
+  <input type="file" id="fileInput" accept="video/*,.vvt,.vtt" multiple hidden />
+
+  <script>
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const fileStatus = document.getElementById('fileStatus');
+    const videoElement = document.getElementById('video');
+    const captionText = document.getElementById('captionText');
+    const videoWrapper = document.getElementById('videoWrapper');
+    const loadedFiles = document.getElementById('loadedFiles');
+
+    let captionCues = [];
+    let videoFileName = '';
+    let captionFileName = '';
+
+    const resetState = () => {
+      captionCues = [];
+      captionText.textContent = '';
+      videoFileName = '';
+      captionFileName = '';
+      loadedFiles.textContent = '';
+    };
+
+    const handleFiles = (files) => {
+      resetState();
+
+      const fileArray = Array.from(files);
+      const videoFile = fileArray.find((file) => file.type.startsWith('video'));
+      const captionFile = fileArray.find((file) => /\.vv?t$/i.test(file.name));
+
+      if (!videoFile || !captionFile) {
+        fileStatus.textContent = 'Please provide both a video file and a .vvt caption file.';
+        videoWrapper.style.display = 'none';
+        if (!videoFile) {
+          console.warn('Video file missing in drop.');
+        }
+        if (!captionFile) {
+          console.warn('Caption file missing in drop.');
+        }
+        return;
+      }
+
+      fileStatus.textContent = 'Processing files…';
+      loadVideo(videoFile);
+      loadCaptions(captionFile);
+    };
+
+    const loadVideo = (file) => {
+      const url = URL.createObjectURL(file);
+      videoElement.src = url;
+      videoFileName = file.name;
+      videoElement.addEventListener('loadedmetadata', () => {
+        videoWrapper.style.display = 'flex';
+        updateLoadedFiles();
+      }, { once: true });
+    };
+
+    const loadCaptions = (file) => {
+      captionFileName = file.name;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        captionCues = parseVVT(event.target.result);
+        fileStatus.textContent = 'Files loaded!';
+        updateLoadedFiles();
+      };
+      reader.onerror = () => {
+        console.error('Failed to read caption file.');
+        fileStatus.textContent = 'Failed to read the caption file.';
+      };
+      reader.readAsText(file);
+    };
+
+    const parseVVT = (content) => {
+      const lines = content.split(/\r?\n/);
+      const cues = [];
+      let i = 0;
+
+      const timeToSeconds = (timestamp) => {
+        const [time, milli = '0'] = timestamp.split('.');
+        const parts = time.split(':').map(Number);
+        const seconds = parts.reduce((acc, value) => acc * 60 + value, 0);
+        return seconds + (parseInt(milli, 10) || 0) / Math.pow(10, milli.length);
+      };
+
+      while (i < lines.length) {
+        const line = lines[i].trim();
+
+        if (!line) {
+          i += 1;
+          continue;
+        }
+
+        // Skip possible cue identifiers
+        if (!line.includes('-->') && i + 1 < lines.length && lines[i + 1].includes('-->')) {
+          i += 1;
+          continue;
+        }
+
+        if (line.includes('-->')) {
+          const [startRaw, endRaw] = line.split('-->').map((part) => part.trim());
+          const start = timeToSeconds(startRaw);
+          const end = timeToSeconds(endRaw.split(' ')[0]);
+          i += 1;
+          let text = '';
+          while (i < lines.length && lines[i].trim()) {
+            text += (text ? '\n' : '') + lines[i].trim();
+            i += 1;
+          }
+          cues.push({ start, end, text });
+        } else {
+          i += 1;
+        }
+      }
+
+      return cues;
+    };
+
+    const findCaptionForTime = (time) => {
+      return captionCues.find((cue) => time >= cue.start && time <= cue.end);
+    };
+
+    const updateCaption = () => {
+      const currentTime = videoElement.currentTime;
+      const cue = findCaptionForTime(currentTime);
+      captionText.textContent = cue ? cue.text : '';
+    };
+
+    const updateLoadedFiles = () => {
+      if (videoFileName && captionFileName) {
+        loadedFiles.textContent = `Loaded video: ${videoFileName} | Captions: ${captionFileName}`;
+      }
+    };
+
+    dropZone.addEventListener('dragover', (event) => {
+      event.preventDefault();
+      dropZone.classList.add('dragover');
+    });
+
+    dropZone.addEventListener('dragleave', () => {
+      dropZone.classList.remove('dragover');
+    });
+
+    dropZone.addEventListener('drop', (event) => {
+      event.preventDefault();
+      dropZone.classList.remove('dragover');
+      const { files } = event.dataTransfer;
+      handleFiles(files);
+    });
+
+    dropZone.addEventListener('click', () => fileInput.click());
+
+    dropZone.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        fileInput.click();
+      }
+    });
+
+    fileInput.addEventListener('change', (event) => {
+      if (event.target.files.length) {
+        handleFiles(event.target.files);
+      }
+    });
+
+    videoElement.addEventListener('timeupdate', updateCaption);
+    videoElement.addEventListener('seeked', updateCaption);
+    videoElement.addEventListener('emptied', () => {
+      captionText.textContent = '';
+    });
+  </script>
+</body>
+</html>
